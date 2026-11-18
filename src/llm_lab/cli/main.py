@@ -9,6 +9,7 @@ import torch
 
 from ..checkpoint import load_checkpoint, save_checkpoint
 from ..config import DEVICE, MERGES_PATH, ROOT_DIR, disable_cudnn, resolve_device
+from ..intel_npu import OpenVINONPU, npu_available
 from ..data import POETRY_CORPUS, CharCorpus, get_corpus, get_nltk_words
 from ..demo import sine_forecast_demo
 from ..generate import generate_chars
@@ -38,6 +39,7 @@ def _load_corpus(data_path: str | None, corpus: str) -> str:
 
 
 DEFAULT_CHAR_TEMPERATURES = [0.7, 1.0, 1.3]
+CHAR_BLOCK_SIZE = 48
 DEFAULT_GPT_PROMPTS = ["ROMEO:", "What is the", "The king "]
 DEFAULT_GPT_TEMPERATURES = [0.8, 1.1]
 
@@ -47,7 +49,7 @@ def _is_exit(text: str) -> bool:
 
 
 def _interactive_char(model, corpus: CharCorpus, args: argparse.Namespace,
-                      device: str) -> None:
+                      device: str, forward=None) -> None:
     """逐行读取 prompt，实时续写；空行或 exit/quit 退出。"""
     print("进入交互模式：输入 prompt 回车续写，空行 / exit 退出")
     while True:
@@ -62,21 +64,23 @@ def _interactive_char(model, corpus: CharCorpus, args: argparse.Namespace,
             print(generate_chars(model, corpus, prompt,
                                  max_new_tokens=args.max_new_tokens,
                                  temperature=args.temperature,
-                                 top_k=args.top_k, device=device))
+                                 top_k=args.top_k, device=device,
+                                 forward=forward, block_size=CHAR_BLOCK_SIZE))
         except KeyError as e:
             print(f"prompt 含有词表外字符 {e}，请换一段输入")
 
 
 def _generate_gpt(model: GPT, tok: BPETokenizer, prompt: str,
-                  args: argparse.Namespace, temperature: float, device: str) -> str:
+                  args: argparse.Namespace, temperature: float, device: str,
+                  forward=None) -> str:
     idx = torch.tensor([tok.encode(prompt)], device=device)
     out = model.generate(idx, args.max_new_tokens, temperature=temperature,
-                         top_k=args.top_k)
+                         top_k=args.top_k, forward=forward)
     return tok.decode(out[0].tolist())
 
 
 def _interactive_gpt(model: GPT, tok: BPETokenizer, args: argparse.Namespace,
-                     device: str) -> None:
+                     device: str, forward=None) -> None:
     """逐行读取 prompt，实时续写；空行或 exit/quit 退出。"""
     print("进入交互模式：输入 prompt 回车续写，空行 / exit 退出")
     while True:
@@ -87,7 +91,8 @@ def _interactive_gpt(model: GPT, tok: BPETokenizer, args: argparse.Namespace,
             return
         if _is_exit(prompt):
             return
-        print(_generate_gpt(model, tok, prompt, args, args.temperature, device))
+        print(_generate_gpt(model, tok, prompt, args, args.temperature,
+                            device, forward))
 
 
 def cmd_char_lstm(args: argparse.Namespace) -> None:
@@ -113,11 +118,19 @@ def cmd_char_lstm(args: argparse.Namespace) -> None:
 
     if args.steps > 0:
         print("-" * 40 + "\n开始训练 ...")
-        train_char_lm(model, corpus, steps=args.steps, device=device)
+        train_char_lm(model, corpus, steps=args.steps, device=device,
+                      block_size=CHAR_BLOCK_SIZE)
         ckpt_path = save_checkpoint(
             args.checkpoint, model_type="char_lstm", state_dict=model.state_dict(),
             itos=corpus.itos, corpus=args.corpus, scratch=args.scratch)
         print(f"权重已保存 -> {ckpt_path}")
+
+    forward = None
+    if args.intel_npu:
+        if not npu_available():
+            raise SystemExit("未检测到 Intel NPU（OpenVINO NPU 设备）")
+        forward = OpenVINONPU(model, CHAR_BLOCK_SIZE)
+        print("生成阶段使用 Intel NPU（OpenVINO）")
 
     if args.prompt:
         char_pairs = [(p, args.temperature) for p in args.prompt if p.strip()]
@@ -129,12 +142,14 @@ def cmd_char_lstm(args: argparse.Namespace) -> None:
     for prompt, temp in char_pairs:
         out_text = generate_chars(model, corpus, prompt,
                                   max_new_tokens=args.max_new_tokens,
-                                  temperature=temp, top_k=args.top_k, device=device)
+                                  temperature=temp, top_k=args.top_k,
+                                  device=device, forward=forward,
+                                  block_size=CHAR_BLOCK_SIZE)
         print(f"\n[temperature={temp}]  prompt: {prompt}")
         print(out_text)
 
     if args.interactive:
-        _interactive_char(model, corpus, args, device)
+        _interactive_char(model, corpus, args, device, forward)
 
 
 def cmd_transformer(args: argparse.Namespace) -> None:
@@ -203,6 +218,13 @@ def cmd_transformer(args: argparse.Namespace) -> None:
         print(f"权重已保存 -> {ckpt_path}")
 
     # 5) 生成
+    forward = None
+    if args.intel_npu:
+        if not npu_available():
+            raise SystemExit("未检测到 Intel NPU（OpenVINO NPU 设备）")
+        forward = OpenVINONPU(model, block_size)
+        print("生成阶段使用 Intel NPU（OpenVINO）")
+
     if args.prompt:
         gpt_pairs = [(p, args.temperature) for p in args.prompt if p.strip()]
     else:
@@ -211,10 +233,10 @@ def cmd_transformer(args: argparse.Namespace) -> None:
     print("-" * 50 + "\n生成示例:")
     for prompt, temp in gpt_pairs:
         print(f"\n[temp={temp}] {prompt}")
-        print(_generate_gpt(model, tok, prompt, args, temp, device))
+        print(_generate_gpt(model, tok, prompt, args, temp, device, forward))
 
     if args.interactive:
-        _interactive_gpt(model, tok, args, device)
+        _interactive_gpt(model, tok, args, device, forward)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -247,6 +269,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="训练后保存权重的路径")
     p_char.add_argument("--load", default=None,
                         help="加载预训练权重（配合 --steps 0 可只生成）")
+    p_char.add_argument("--intel-npu", action="store_true",
+                        help="生成阶段使用 Intel NPU（OpenVINO）；训练仍用 --device")
 
     p_tr = sub.add_parser("transformer", help="BPE + Transformer 语言模型：训练 + 生成")
     src = p_tr.add_mutually_exclusive_group()
@@ -284,6 +308,8 @@ def build_parser() -> argparse.ArgumentParser:
                       help="训练后保存权重的路径")
     p_tr.add_argument("--load", default=None,
                       help="加载预训练权重（配合 --steps 0 可只生成）")
+    p_tr.add_argument("--intel-npu", action="store_true",
+                      help="生成阶段使用 Intel NPU（OpenVINO）；训练仍用 --device")
     return parser
 
 

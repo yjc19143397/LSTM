@@ -18,6 +18,7 @@ lstm/
 │   ├── train.py              # 训练循环（tqdm 进度条）
 │   ├── generate.py           # 字符级自回归生成
 │   ├── checkpoint.py         # 预训练权重保存/加载
+│   ├── intel_npu.py          # Intel NPU 推理（OpenVINO）
 │   ├── models/
 │   │   ├── lstm.py           # 手写 LSTM 单元与多层堆叠、对齐验证
 │   │   ├── char_lm.py        # 字符级 LSTM 语言模型
@@ -80,6 +81,20 @@ python run.py char-lstm --device cpu --steps 200      # CPU 调试
 ```powershell
 pip install torch-npu
 ```
+
+`--device npu` 专指昇腾；没有 `torch_npu` 时会提示改用 Intel NPU 的 `--intel-npu`。
+
+### Intel NPU（AI Boost）
+
+Intel NPU 没有对应的 PyTorch 张量设备，只通过 OpenVINO 加速**生成阶段**；训练仍使用 `--device`（建议 CUDA）。
+
+```powershell
+python run.py transformer --steps 0 --load checkpoints/transformer.pt --intel-npu
+python run.py char-lstm  --steps 0 --load checkpoints/char_lstm.pt  --intel-npu
+python run.py transformer --steps 2000 --intel-npu   # 训练用 CUDA，生成用 NPU
+```
+
+实现方式：把模型前向固定为 `(1, block_size)` 静态形状，用 `ov.convert_model` 转换后编译到 `NPU`，生成时右侧 pad、取真实末位 logits。需要安装 `openvino`（`npu_available()` 会检查 NPU 设备）。
 
 ## 预训练权重
 

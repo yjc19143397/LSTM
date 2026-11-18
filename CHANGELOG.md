@@ -2,6 +2,19 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 风格。
 
+## [0.6.0] - 2026-11-18
+
+### 新增
+
+- Intel NPU（AI Boost）推理支持：`--intel-npu` 通过 OpenVINO 把模型固定形状编译到 NPU，仅用于生成阶段，训练仍在 `--device` 上。
+- `generate_chars` 与 `GPT.generate` 新增 `forward` 参数，可替换前向计算；字符级新增 `block_size` 参数供固定形状推理使用。
+- `tests/test_intel_npu.py`：NPU 前向数值对齐（fp16 容差）、forward 接口测试。
+
+### 变更
+
+- `--device npu` 明确仅指昇腾（torch_npu）；无 torch_npu 时给出提示并退出。
+- 版本号提升至 0.6.0，README 增加 Intel NPU 用法。
+
 ## [0.5.0] - 2026-11-18
 
 ### 新增

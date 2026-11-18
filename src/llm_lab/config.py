@@ -28,7 +28,16 @@ def _npu_available() -> bool:
 
 
 def resolve_device(name: str = "auto") -> str:
-    """显式指定优先；auto 时按 NPU > CUDA > CPU 选择。"""
+    """显式指定优先；auto 时按 NPU > CUDA > CPU 选择。
+
+    这里的 ``npu`` 指昇腾（torch_npu）；Intel NPU 走 OpenVINO 推理，
+    由 ``--intel-npu`` 控制，不进入该设备字符串。
+    """
+    if name == "npu":
+        if not _npu_available():
+            raise SystemExit(
+                "未检测到昇腾 NPU（torch_npu）；Intel NPU 请使用 --intel-npu 做推理加速")
+        return name
     if name and name != "auto":
         return name
     if _npu_available():

@@ -34,7 +34,16 @@ def test_load_missing_checkpoint():
 def test_resolve_device_explicit():
     assert resolve_device("cpu") == "cpu"
     assert resolve_device("cuda") == "cuda"
-    assert resolve_device("npu") == "npu"
+
+
+def test_resolve_device_npu_requires_torch_npu():
+    from llm_lab.config import _npu_available
+
+    if _npu_available():
+        assert resolve_device("npu") == "npu"
+    else:
+        with pytest.raises(SystemExit):
+            resolve_device("npu")
 
 
 def test_resolve_device_auto():

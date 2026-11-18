@@ -101,11 +101,11 @@ class GPT(nn.Module):
 
     @torch.no_grad()
     def generate(self, idx, max_new_tokens: int, temperature: float = 1.0,
-                 top_k: int | None = None):
+                 top_k: int | None = None, forward=None):
         self.eval()
         for _ in range(max_new_tokens):
             idx_cond = idx[:, -self.block_size:]
-            logits, _ = self(idx_cond)
+            logits = forward(idx_cond) if forward is not None else self(idx_cond)[0]
             logits = logits[:, -1, :] / max(temperature, 1e-6)
             if top_k is not None:
                 k = min(top_k, logits.size(-1))
