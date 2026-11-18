@@ -15,13 +15,15 @@ lstm/
 │   ├── data.py               # 语料加载、字符词表、批采样
 │   ├── tokenizer.py          # byte-level BPE 分词器
 │   ├── demo.py               # 正弦序列预测 demo
-│   ├── train.py              # 字符级 LSTM / Transformer 训练循环
+│   ├── train.py              # 训练循环（tqdm 进度条）
 │   ├── generate.py           # 字符级自回归生成
+│   ├── checkpoint.py         # 预训练权重保存/加载
 │   ├── models/
 │   │   ├── lstm.py           # 手写 LSTM 单元与多层堆叠、对齐验证
 │   │   ├── char_lm.py        # 字符级 LSTM 语言模型
 │   │   └── transformer.py    # GPT：因果自注意力 / Pre-LN / 权重共享
 │   └── cli/main.py           # 统一命令行入口
+├── checkpoints/              # 训练产物（git 忽略）
 ├── tests/                    # pytest 单元测试
 ├── run.py                    # 免安装运行入口
 ├── pyproject.toml            # 包配置与 pytest 配置
@@ -62,6 +64,34 @@ python run.py transformer --interactive --temperature 0.8 --top-k 30 # 交互 + 
 pip install -e ".[dev]"
 llm-lab transformer --steps 2000
 ```
+
+## 设备选择（NPU / CUDA / CPU）
+
+`--device` 支持 `auto`（默认）、`npu`、`cuda`、`cpu`：
+
+```powershell
+python run.py transformer --device npu --steps 2000   # 昇腾 NPU
+python run.py transformer --device cuda               # NVIDIA GPU
+python run.py char-lstm --device cpu --steps 200      # CPU 调试
+```
+
+`auto` 按 **NPU > CUDA > CPU** 选择。NPU 需要安装与 torch 版本匹配的 `torch_npu`，未安装时自动回落到 CUDA/CPU：
+
+```powershell
+pip install torch-npu
+```
+
+## 预训练权重
+
+训练结束会自动保存权重，默认 `checkpoints/char_lstm.pt` 与 `checkpoints/transformer.pt`，可用 `--checkpoint` 指定路径。
+
+```powershell
+python run.py transformer --steps 2000                                   # 训练并保存
+python run.py transformer --steps 0 --load checkpoints/transformer.pt    # 加载后只生成
+python run.py transformer --steps 500 --load checkpoints/transformer.pt  # 继续训练
+```
+
+Transformer 的权重内含 BPE merges 与模型配置，加载时无需再传 `--vocab-size` / `--n-layer` 等参数（57M 参数模型约 228MB）。字符级权重会校验字符词表，换语料时需保持 `--corpus` 一致。
 
 ## 三个命令
 
@@ -114,10 +144,11 @@ Transformer：
 pytest
 ```
 
-测试覆盖：手写 LSTM 与 `nn.LSTM` 数值一致、字符词表编解码、BPE 编解码与持久化、Transformer 前向与生成。
+测试覆盖：手写 LSTM 与 `nn.LSTM` 数值一致、字符词表编解码、BPE 编解码与持久化、Transformer 前向与生成、权重保存/加载、设备解析、命令行输入。
 
 ## 说明
 
 - `data/` 中的语料缺失时，`transformer` 会自动下载 TinyShakespeare；下载失败则回落到内置小语料。
+- 训练使用 `tqdm` 进度条；未安装时自动回退到按间隔打印日志。
 - 在上述环境验证通过：Python 3.14.3、torch 2.11.0（CUDA 可用）。
 - 在 Windows + cuDNN 下，`nn.LSTM` 可能在进程退出时崩溃，`char-lstm` 命令会自动禁用 cuDNN 规避。

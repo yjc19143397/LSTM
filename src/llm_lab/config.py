@@ -16,7 +16,29 @@ NLTK_WORDS_PATH = os.path.join(DATA_DIR, "nltk_words.txt")
 DATA_URL = ("https://fastly.jsdelivr.net/gh/karpathy/char-rnn@master/"
             "data/tinyshakespeare/input.txt")
 
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+def _npu_available() -> bool:
+    """导入 torch_npu 后 torch.npu 才注册；未安装或驱动不可用时返回 False。"""
+    try:
+        import torch_npu  # noqa: F401
+    except ImportError:
+        return False
+    npu = getattr(torch, "npu", None)
+    return bool(npu is not None and npu.is_available())
+
+
+def resolve_device(name: str = "auto") -> str:
+    """显式指定优先；auto 时按 NPU > CUDA > CPU 选择。"""
+    if name and name != "auto":
+        return name
+    if _npu_available():
+        return "npu"
+    if torch.cuda.is_available():
+        return "cuda"
+    return "cpu"
+
+
+DEVICE = resolve_device()
 
 
 def disable_cudnn() -> None:

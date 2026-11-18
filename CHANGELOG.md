@@ -2,6 +2,20 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 风格。
 
+## [0.5.0] - 2026-11-18
+
+### 新增
+
+- 设备解析 `resolve_device()` 与 `--device auto|npu|cuda|cpu`：`auto` 按 NPU > CUDA > CPU 选择，安装 `torch_npu` 后自动启用昇腾 NPU。
+- 预训练权重保存/加载（`checkpoint.py`）：训练结束自动保存，`--checkpoint` 指定路径，`--load` 加载后继续训练，配合 `--steps 0` 可只生成。
+- Transformer 权重自含 BPE merges 与模型配置，加载时无需重复传模型参数；字符级权重会校验字符词表。
+- `tqdm` 训练进度条，实时显示 loss / ppl / val / lr；未安装时回退到按间隔打印。
+
+### 变更
+
+- 版本号提升至 0.5.0，`requirements.txt` 与 `pyproject.toml` 增加 `tqdm>=4.66`。
+- 训练循环与生成函数改为显式传入 `device`，不再依赖模块级常量。
+
 ## [0.4.0] - 2026-11-18
 
 ### 新增

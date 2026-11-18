@@ -4,13 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llm-lab"
-version = "0.4.0"
+version = "0.5.0"
 description = "从零实现 LSTM 与 Transformer 语言模型的项目"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 dependencies = [
     "torch>=2.0",
+    "tqdm>=4.66",
 ]
 
 [project.optional-dependencies]

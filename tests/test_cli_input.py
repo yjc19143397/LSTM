@@ -28,7 +28,7 @@ def test_interactive_char_exits_on_blank(monkeypatch, capsys):
     model = CharLSTM(corpus.vocab_size, d_model=8, hidden=12, num_layers=1)
     args = build_parser().parse_args(["char-lstm"])
     monkeypatch.setattr("builtins.input", lambda _prompt="": "")
-    _interactive_char(model, corpus, args)
+    _interactive_char(model, corpus, args, "cpu")
     assert "退出" in capsys.readouterr().out
 
 
@@ -38,7 +38,7 @@ def test_interactive_char_reports_unknown_char(monkeypatch, capsys):
     args = build_parser().parse_args(["char-lstm"])
     inputs = iter(["z"])  # 第二次输入回落到空串，退出
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(inputs, ""))
-    _interactive_char(model, corpus, args)
+    _interactive_char(model, corpus, args, "cpu")
     assert "词表外字符" in capsys.readouterr().out
 
 
@@ -47,4 +47,4 @@ def test_interactive_gpt_exits_on_quit(monkeypatch):
     model = GPT(tok.vocab_size, block_size=8, n_layer=1, n_head=2, n_embd=8)
     args = build_parser().parse_args(["transformer"])
     monkeypatch.setattr("builtins.input", lambda _prompt="": "quit")
-    _interactive_gpt(model, tok, args)
+    _interactive_gpt(model, tok, args, "cpu")

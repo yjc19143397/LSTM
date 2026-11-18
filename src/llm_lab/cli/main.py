@@ -7,7 +7,8 @@ import os
 
 import torch
 
-from ..config import DEVICE, MERGES_PATH, disable_cudnn
+from ..checkpoint import load_checkpoint, save_checkpoint
+from ..config import DEVICE, MERGES_PATH, ROOT_DIR, disable_cudnn, resolve_device
 from ..data import POETRY_CORPUS, CharCorpus, get_corpus, get_nltk_words
 from ..demo import sine_forecast_demo
 from ..generate import generate_chars
@@ -45,7 +46,8 @@ def _is_exit(text: str) -> bool:
     return not text.strip() or text.strip().lower() in {"exit", "quit"}
 
 
-def _interactive_char(model, corpus: CharCorpus, args: argparse.Namespace) -> None:
+def _interactive_char(model, corpus: CharCorpus, args: argparse.Namespace,
+                      device: str) -> None:
     """逐行读取 prompt，实时续写；空行或 exit/quit 退出。"""
     print("进入交互模式：输入 prompt 回车续写，空行 / exit 退出")
     while True:
@@ -60,20 +62,21 @@ def _interactive_char(model, corpus: CharCorpus, args: argparse.Namespace) -> No
             print(generate_chars(model, corpus, prompt,
                                  max_new_tokens=args.max_new_tokens,
                                  temperature=args.temperature,
-                                 top_k=args.top_k))
+                                 top_k=args.top_k, device=device))
         except KeyError as e:
             print(f"prompt 含有词表外字符 {e}，请换一段输入")
 
 
 def _generate_gpt(model: GPT, tok: BPETokenizer, prompt: str,
-                  args: argparse.Namespace, temperature: float) -> str:
-    idx = torch.tensor([tok.encode(prompt)], device=DEVICE)
+                  args: argparse.Namespace, temperature: float, device: str) -> str:
+    idx = torch.tensor([tok.encode(prompt)], device=device)
     out = model.generate(idx, args.max_new_tokens, temperature=temperature,
                          top_k=args.top_k)
     return tok.decode(out[0].tolist())
 
 
-def _interactive_gpt(model: GPT, tok: BPETokenizer, args: argparse.Namespace) -> None:
+def _interactive_gpt(model: GPT, tok: BPETokenizer, args: argparse.Namespace,
+                     device: str) -> None:
     """逐行读取 prompt，实时续写；空行或 exit/quit 退出。"""
     print("进入交互模式：输入 prompt 回车续写，空行 / exit 退出")
     while True:
@@ -84,21 +87,37 @@ def _interactive_gpt(model: GPT, tok: BPETokenizer, args: argparse.Namespace) ->
             return
         if _is_exit(prompt):
             return
-        print(_generate_gpt(model, tok, prompt, args, args.temperature))
+        print(_generate_gpt(model, tok, prompt, args, args.temperature, device))
 
 
 def cmd_char_lstm(args: argparse.Namespace) -> None:
     """字符级 LSTM 语言模型：训练 + 生成。"""
     disable_cudnn()
+    device = resolve_device(args.device)
     text = get_nltk_words() if args.corpus == "nltk-words" else POETRY_CORPUS
     corpus = CharCorpus(text)
-    model = CharLSTM(corpus.vocab_size, scratch=args.scratch).to(DEVICE)
+    model = CharLSTM(corpus.vocab_size, scratch=args.scratch).to(device)
+
+    if args.load:
+        ckpt = load_checkpoint(args.load)
+        if ckpt.get("scratch", args.scratch) != args.scratch:
+            raise SystemExit("权重文件的 --scratch 设置与当前命令不一致")
+        if ckpt.get("itos") != corpus.itos:
+            raise SystemExit("权重文件的字符词表与当前语料不一致，请使用相同 --corpus")
+        model.load_state_dict(ckpt["state_dict"])
+        print(f"已加载预训练权重 {args.load}")
+
     n_params = sum(p.numel() for p in model.parameters())
-    print(f"设备: {DEVICE}  语料 {len(corpus.text)} 字符  词表 {corpus.vocab_size}  "
+    print(f"设备: {device}  语料 {len(corpus.text)} 字符  词表 {corpus.vocab_size}  "
           f"参数量 {n_params:,}")
 
-    print("-" * 40 + "\n开始训练 ...")
-    train_char_lm(model, corpus, steps=args.steps)
+    if args.steps > 0:
+        print("-" * 40 + "\n开始训练 ...")
+        train_char_lm(model, corpus, steps=args.steps, device=device)
+        ckpt_path = save_checkpoint(
+            args.checkpoint, model_type="char_lstm", state_dict=model.state_dict(),
+            itos=corpus.itos, corpus=args.corpus, scratch=args.scratch)
+        print(f"权重已保存 -> {ckpt_path}")
 
     if args.prompt:
         char_pairs = [(p, args.temperature) for p in args.prompt if p.strip()]
@@ -110,58 +129,78 @@ def cmd_char_lstm(args: argparse.Namespace) -> None:
     for prompt, temp in char_pairs:
         out_text = generate_chars(model, corpus, prompt,
                                   max_new_tokens=args.max_new_tokens,
-                                  temperature=temp, top_k=args.top_k)
+                                  temperature=temp, top_k=args.top_k, device=device)
         print(f"\n[temperature={temp}]  prompt: {prompt}")
         print(out_text)
 
     if args.interactive:
-        _interactive_char(model, corpus, args)
+        _interactive_char(model, corpus, args, device)
 
 
 def cmd_transformer(args: argparse.Namespace) -> None:
     """BPE + Transformer 语言模型：训练 + 生成。"""
+    device = resolve_device(args.device)
     text = _load_corpus(args.data, args.corpus)
-    print(f"设备: {DEVICE}  语料 {len(text):,} 字符  torch {torch.__version__}")
+    ckpt = load_checkpoint(args.load) if args.load else None
 
-    # 1) 分词器：有缓存直接加载，否则现场训练（约 1 分钟）
-    os.makedirs(os.path.dirname(MERGES_PATH), exist_ok=True)
-    if os.path.exists(MERGES_PATH) and not args.retrain_bpe:
-        tok = BPETokenizer.load(MERGES_PATH)
-        print(f"加载缓存分词器：词表 {tok.vocab_size}")
-        if tok.vocab_size != args.vocab_size:
-            print(f"注意：缓存词表 {tok.vocab_size} 与 --vocab-size "
-                  f"{args.vocab_size} 不一致，以缓存为准")
-        if args.bpe_extra != "none":
-            print("提示：--bpe-extra 只在重建分词器时生效，需同时加 --retrain-bpe")
+    # 1) 分词器：优先用权重自带的 merges，其次缓存，最后现场训练
+    if ckpt is not None:
+        tok = BPETokenizer(ckpt["merges"])
+        model_cfg = ckpt["model_config"]
+        print(f"从权重恢复分词器：词表 {tok.vocab_size}")
     else:
-        print(f"训练 BPE 分词器（词表 {args.vocab_size}）...")
-        bpe_text = text if args.bpe_chars <= 0 else text[:args.bpe_chars]
-        if args.bpe_extra == "nltk-words":
-            # 先喂英文词表，让高频单词优先被合并成整词 token
-            bpe_text = get_nltk_words() + "\n" + bpe_text
-            print("BPE 训练文本已加入 NLTK 英文词表")
-        tok = BPETokenizer.train(bpe_text, args.vocab_size)
-        tok.save(MERGES_PATH)
-        print(f"分词器已缓存 -> {MERGES_PATH}")
+        os.makedirs(os.path.dirname(MERGES_PATH), exist_ok=True)
+        if os.path.exists(MERGES_PATH) and not args.retrain_bpe:
+            tok = BPETokenizer.load(MERGES_PATH)
+            print(f"加载缓存分词器：词表 {tok.vocab_size}")
+            if tok.vocab_size != args.vocab_size:
+                print(f"注意：缓存词表 {tok.vocab_size} 与 --vocab-size "
+                      f"{args.vocab_size} 不一致，以缓存为准")
+            if args.bpe_extra != "none":
+                print("提示：--bpe-extra 只在重建分词器时生效，需同时加 --retrain-bpe")
+        else:
+            print(f"训练 BPE 分词器（词表 {args.vocab_size}）...")
+            bpe_text = text if args.bpe_chars <= 0 else text[:args.bpe_chars]
+            if args.bpe_extra == "nltk-words":
+                # 先喂英文词表，让高频单词优先被合并成整词 token
+                bpe_text = get_nltk_words() + "\n" + bpe_text
+                print("BPE 训练文本已加入 NLTK 英文词表")
+            tok = BPETokenizer.train(bpe_text, args.vocab_size)
+            tok.save(MERGES_PATH)
+            print(f"分词器已缓存 -> {MERGES_PATH}")
+        model_cfg = {"vocab_size": tok.vocab_size, "block_size": args.block_size,
+                     "n_layer": args.n_layer, "n_head": args.n_head,
+                     "n_embd": args.n_embd}
+
+    block_size = model_cfg["block_size"]
+    print(f"设备: {device}  语料 {len(text):,} 字符  torch {torch.__version__}")
 
     # 2) 编码语料并切分训练/验证集
     ids = tok.encode(text)
     data = torch.tensor(ids, dtype=torch.long)
-    n_val = max(args.block_size + 2, len(data) // 20)
+    n_val = max(block_size + 2, len(data) // 20)
     train_data, val_data = data[:-n_val], data[-n_val:]
     print(f"token 数 {len(data):,}（压缩比 {len(text) / len(data):.2f} 字符/token）"
           f"  训练 {len(train_data):,}  验证 {len(val_data):,}")
 
     # 3) 建模型
-    model = GPT(tok.vocab_size, args.block_size, args.n_layer,
-                args.n_head, args.n_embd).to(DEVICE)
+    model = GPT(model_cfg["vocab_size"], block_size, model_cfg["n_layer"],
+                model_cfg["n_head"], model_cfg["n_embd"]).to(device)
+    if ckpt is not None:
+        model.load_state_dict(ckpt["state_dict"])
+        print(f"已加载预训练权重 {args.load}")
     n_params = sum(p.numel() for p in model.parameters())
-    print(f"模型参数量 {n_params:,}（{args.n_layer} 层, {args.n_head} 头, "
-          f"d_model={args.n_embd}）\n" + "-" * 50)
+    print(f"模型参数量 {n_params:,}（{model_cfg['n_layer']} 层, "
+          f"{model_cfg['n_head']} 头, d_model={model_cfg['n_embd']}）\n" + "-" * 50)
 
     # 4) 训练
-    train_transformer(model, train_data, val_data, args.steps,
-                      args.block_size, args.batch_size)
+    if args.steps > 0:
+        train_transformer(model, train_data, val_data, args.steps,
+                          block_size, args.batch_size, device=device)
+        ckpt_path = save_checkpoint(args.checkpoint, model_type="gpt",
+                                    state_dict=model.state_dict(),
+                                    model_config=model_cfg, merges=tok.merges)
+        print(f"权重已保存 -> {ckpt_path}")
 
     # 5) 生成
     if args.prompt:
@@ -172,10 +211,10 @@ def cmd_transformer(args: argparse.Namespace) -> None:
     print("-" * 50 + "\n生成示例:")
     for prompt, temp in gpt_pairs:
         print(f"\n[temp={temp}] {prompt}")
-        print(_generate_gpt(model, tok, prompt, args, temp))
+        print(_generate_gpt(model, tok, prompt, args, temp, device))
 
     if args.interactive:
-        _interactive_gpt(model, tok, args)
+        _interactive_gpt(model, tok, args, device)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -200,6 +239,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_char.add_argument("--temperature", type=float, default=0.9,
                         help="--prompt / 交互模式使用的采样温度")
     p_char.add_argument("--top-k", type=int, default=40, help="top-k 采样")
+    p_char.add_argument("--device", default="auto",
+                        choices=["auto", "npu", "cuda", "cpu"],
+                        help="运行设备，auto 按 NPU > CUDA > CPU 选择")
+    p_char.add_argument("--checkpoint",
+                        default=os.path.join(ROOT_DIR, "checkpoints", "char_lstm.pt"),
+                        help="训练后保存权重的路径")
+    p_char.add_argument("--load", default=None,
+                        help="加载预训练权重（配合 --steps 0 可只生成）")
 
     p_tr = sub.add_parser("transformer", help="BPE + Transformer 语言模型：训练 + 生成")
     src = p_tr.add_mutually_exclusive_group()
@@ -229,6 +276,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_tr.add_argument("--temperature", type=float, default=0.9,
                       help="--prompt / 交互模式使用的采样温度")
     p_tr.add_argument("--top-k", type=int, default=40, help="top-k 采样")
+    p_tr.add_argument("--device", default="auto",
+                      choices=["auto", "npu", "cuda", "cpu"],
+                      help="运行设备，auto 按 NPU > CUDA > CPU 选择")
+    p_tr.add_argument("--checkpoint",
+                      default=os.path.join(ROOT_DIR, "checkpoints", "transformer.pt"),
+                      help="训练后保存权重的路径")
+    p_tr.add_argument("--load", default=None,
+                      help="加载预训练权重（配合 --steps 0 可只生成）")
     return parser
 
 
