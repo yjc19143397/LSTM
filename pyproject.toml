@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llm-lab"
-version = "0.2.0"
+version = "0.3.0"
 description = "从零实现 LSTM 与 Transformer 语言模型的项目"
 readme = "README.md"
 requires-python = ">=3.9"

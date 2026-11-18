@@ -11,6 +11,7 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 DATA_DIR = os.path.join(ROOT_DIR, "data")
 SHAKESPEARE_PATH = os.path.join(DATA_DIR, "tinyshakespeare.txt")
 MERGES_PATH = os.path.join(DATA_DIR, "bpe_merges.json")
+NLTK_WORDS_PATH = os.path.join(DATA_DIR, "nltk_words.txt")
 
 DATA_URL = ("https://fastly.jsdelivr.net/gh/karpathy/char-rnn@master/"
             "data/tinyshakespeare/input.txt")

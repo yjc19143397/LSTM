@@ -2,6 +2,19 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 风格。
 
+## [0.3.0] - 2026-11-18
+
+### 新增
+
+- 集成 NLTK 英文词库：`data/nltk_words.txt`，共 235,886 词，来自 `nltk.corpus.words`（经 HuggingFace 镜像导出，运行时不依赖 nltk/pandas/pyarrow）。
+- `char-lstm --corpus nltk-words` 与 `transformer --corpus nltk-words`：用词表作为训练语料。
+- `transformer --bpe-extra nltk-words`：重建 BPE 时先喂词表，提升英文整词覆盖。
+- `tests/test_nltk_corpus.py`：词表加载、去重与非空校验、CLI 语料选择。
+
+### 变更
+
+- 版本号提升至 0.3.0，README 补充 NLTK 词库来源与用法。
+
 ## [0.2.0] - 2026-11-18
 
 ### 变更

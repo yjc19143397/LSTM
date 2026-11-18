@@ -8,7 +8,7 @@ import os
 import torch
 
 from ..config import DEVICE, MERGES_PATH, disable_cudnn
-from ..data import POETRY_CORPUS, CharCorpus, get_corpus
+from ..data import POETRY_CORPUS, CharCorpus, get_corpus, get_nltk_words
 from ..demo import sine_forecast_demo
 from ..generate import generate_chars
 from ..models import CharLSTM, GPT, alignment_max_diff
@@ -27,10 +27,20 @@ def cmd_verify(_args: argparse.Namespace) -> None:
     sine_forecast_demo()
 
 
+def _load_corpus(data_path: str | None, corpus: str) -> str:
+    """按 --data / --corpus 选择训练文本。"""
+    if data_path:
+        return get_corpus(data_path)
+    if corpus == "nltk-words":
+        return get_nltk_words()
+    return get_corpus()
+
+
 def cmd_char_lstm(args: argparse.Namespace) -> None:
     """字符级 LSTM 语言模型：训练 + 生成。"""
     disable_cudnn()
-    corpus = CharCorpus(POETRY_CORPUS)
+    text = get_nltk_words() if args.corpus == "nltk-words" else POETRY_CORPUS
+    corpus = CharCorpus(text)
     model = CharLSTM(corpus.vocab_size, scratch=args.scratch).to(DEVICE)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"设备: {DEVICE}  语料 {len(corpus.text)} 字符  词表 {corpus.vocab_size}  "
@@ -51,7 +61,7 @@ def cmd_char_lstm(args: argparse.Namespace) -> None:
 
 def cmd_transformer(args: argparse.Namespace) -> None:
     """BPE + Transformer 语言模型：训练 + 生成。"""
-    text = get_corpus(args.data)
+    text = _load_corpus(args.data, args.corpus)
     print(f"设备: {DEVICE}  语料 {len(text):,} 字符  torch {torch.__version__}")
 
     # 1) 分词器：有缓存直接加载，否则现场训练（约 1 分钟）
@@ -62,9 +72,15 @@ def cmd_transformer(args: argparse.Namespace) -> None:
         if tok.vocab_size != args.vocab_size:
             print(f"注意：缓存词表 {tok.vocab_size} 与 --vocab-size "
                   f"{args.vocab_size} 不一致，以缓存为准")
+        if args.bpe_extra != "none":
+            print("提示：--bpe-extra 只在重建分词器时生效，需同时加 --retrain-bpe")
     else:
         print(f"训练 BPE 分词器（词表 {args.vocab_size}）...")
         bpe_text = text if args.bpe_chars <= 0 else text[:args.bpe_chars]
+        if args.bpe_extra == "nltk-words":
+            # 先喂英文词表，让高频单词优先被合并成整词 token
+            bpe_text = get_nltk_words() + "\n" + bpe_text
+            print("BPE 训练文本已加入 NLTK 英文词表")
         tok = BPETokenizer.train(bpe_text, args.vocab_size)
         tok.save(MERGES_PATH)
         print(f"分词器已缓存 -> {MERGES_PATH}")
@@ -110,9 +126,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_char.add_argument("--steps", type=int, default=2000, help="训练步数")
     p_char.add_argument("--scratch", action="store_true",
                         help="使用手写 MyLSTM 代替 nn.LSTM")
+    p_char.add_argument("--corpus", choices=["poetry", "nltk-words"], default="poetry",
+                        help="训练语料：内置古诗词或 NLTK 英文词表")
 
     p_tr = sub.add_parser("transformer", help="BPE + Transformer 语言模型：训练 + 生成")
-    p_tr.add_argument("--data", default=None, help="本地语料路径(UTF-8)")
+    src = p_tr.add_mutually_exclusive_group()
+    src.add_argument("--data", default=None, help="本地语料路径(UTF-8)")
+    src.add_argument("--corpus", choices=["shakespeare", "nltk-words"],
+                     default="shakespeare",
+                     help="内置语料：TinyShakespeare 或 NLTK 英文词表")
+    p_tr.add_argument("--bpe-extra", choices=["none", "nltk-words"], default="none",
+                      help="重建 BPE 时额外加入 NLTK 词表，提升英文单词覆盖")
     p_tr.add_argument("--vocab-size", type=int, default=16384,
                       help="BPE 词表大小（256 基础字节 + 合并数）")
     p_tr.add_argument("--block-size", type=int, default=256, help="上下文长度")

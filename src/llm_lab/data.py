@@ -9,7 +9,7 @@ import urllib.request
 
 import torch
 
-from .config import DATA_DIR, DATA_URL, SHAKESPEARE_PATH
+from .config import DATA_DIR, DATA_URL, NLTK_WORDS_PATH, SHAKESPEARE_PATH
 
 # 预分词：英文单词/数字/缩写，中文按单字切分，空白单独成片（GPT-2 风格）
 PRETOKEN_RE = re.compile(
@@ -111,6 +111,20 @@ def get_corpus(data_path: str | None = None) -> str:
             time.sleep(2 * attempt)
     print("下载不可用，使用内置小语料（建议通过 --data 指定本地文本）")
     return FALLBACK_TEXT
+
+
+def get_nltk_words(path: str | None = None) -> str:
+    """读取 NLTK words 词表（每行一个词），返回按换行拼接的文本。
+
+    词表来自 nltk.corpus.words，共 235,886 个英文词，已导出到 data/nltk_words.txt。
+    """
+    path = path or NLTK_WORDS_PATH
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"未找到 NLTK 词表 {path}，请参考 README 重新生成 data/nltk_words.txt")
+    with open(path, encoding="utf-8") as f:
+        words = [line.strip() for line in f if line.strip()]
+    return "\n".join(words)
 
 
 class CharCorpus:

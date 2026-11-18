@@ -8,6 +8,7 @@
 lstm/
 ├── data/                     # 语料与分词器缓存
 │   ├── tinyshakespeare.txt   # 1.1MB 英文语料
+│   ├── nltk_words.txt        # NLTK 英文词表（235,886 词）
 │   └── bpe_merges.json       # BPE 合并规则缓存
 ├── src/llm_lab/
 │   ├── config.py             # 路径、设备、cuDNN 开关
@@ -38,6 +39,14 @@ python run.py char-lstm --scratch            # 用自己手写的 MyLSTM 训练�
 python run.py transformer --steps 2000       # BPE + Transformer（TinyShakespeare）
 ```
 
+用 NLTK 英文词库训练：
+
+```powershell
+python run.py char-lstm --corpus nltk-words                    # 词表作为字符级语料
+python run.py transformer --corpus nltk-words --steps 2000     # 词表作为 Transformer 语料
+python run.py transformer --retrain-bpe --bpe-extra nltk-words # 重建 BPE 时优先合并英文整词
+```
+
 也可以安装为包，使用 `llm-lab` 命令：
 
 ```powershell
@@ -57,9 +66,21 @@ llm-lab transformer --steps 2000
 
 ```powershell
 python run.py transformer --data my.txt      # 换任意 UTF-8 语料（中文也可）
+python run.py transformer --corpus nltk-words  # 用 NLTK 英文词表训练
 python run.py transformer --retrain-bpe      # 重新训练分词器
 python run.py transformer --n-layer 6 --n-head 6 --n-embd 384 --steps 1000   # 小模型快速试跑
 ```
+
+## NLTK 英文词库
+
+`data/nltk_words.txt` 来自 `nltk.corpus.words`，共 235,886 个英文词，每行一个。
+
+nltk_data 的语料 zip 存放在 Git LFS 上，官方 `nltk.download()` 在部分网络下会被 GitHub 连接重置；因此该词表通过 HuggingFace 镜像 `nltk-data-hub/words` 导出为纯文本。运行时只读取 txt，不依赖 nltk / pandas / pyarrow。
+
+两种用法：
+
+- 作为训练语料：`--corpus nltk-words`（`char-lstm` 与 `transformer` 均支持）
+- 作为分词器词表：`--retrain-bpe --bpe-extra nltk-words`，重建 BPE 时先喂词表，让高频英文单词优先被合并成整词 token
 
 ## 训练与生成流程
 
