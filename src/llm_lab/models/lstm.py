@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""用 PyTorch 从零实现 LSTM（手写门控单元），并与 nn.LSTM 对齐验证 + 训练小demo。
+"""手写 LSTM（门控单元 + 多层堆叠），并与 nn.LSTM 做数值对齐验证。
 
 LSTM 单步公式：
     i_t = sigmoid(W_i x_t + b_i + W_h h_{t-1} + b_h)   输入门
@@ -9,7 +9,7 @@ LSTM 单步公式：
     c_t = f_t * c_{t-1} + i_t * g_t                    细胞状态更新
     h_t = o_t * tanh(c_t)                              隐藏状态输出
 """
-import math
+from __future__ import annotations
 
 import torch
 from torch import nn
@@ -89,67 +89,19 @@ def build_aligned_nn_lstm(my_lstm: MyLSTM) -> nn.LSTM:
     return ref
 
 
-def verify_against_nn_lstm():
-    """随机输入下，自定义实现应与 nn.LSTM 输出完全一致。"""
-    torch.manual_seed(0)
-    for num_layers in (1, 2):
-        seq_len, batch, input_size, hidden_size = 7, 5, 3, 16
-        mine = MyLSTM(input_size, hidden_size, num_layers)
-        ref = build_aligned_nn_lstm(mine)
-        x = torch.randn(seq_len, batch, input_size)
-        out_mine, (h_mine, c_mine) = mine(x)
-        out_ref, (h_ref, c_ref) = ref(x)
-        ok = (torch.allclose(out_mine, out_ref, atol=1e-6)
-              and torch.allclose(h_mine, h_ref, atol=1e-6)
-              and torch.allclose(c_mine, c_ref, atol=1e-6))
-        print(f"对齐验证 num_layers={num_layers}: {'PASS' if ok else 'FAIL'} "
-              f"(max diff = {(out_mine - out_ref).abs().max().item():.2e})")
-
-
-def demo_sine_forecast():
-    """训练demo：给定过去 20 个点的正弦窗口，预测下一个点的值。"""
-    torch.manual_seed(0)
-
-    # 构造数据：滑窗切分正弦序列
-    t = torch.arange(0, 200, dtype=torch.float32)
-    wave = torch.sin(t * 0.1)
-    window = 20
-    xs, ys = [], []
-    for i in range(len(wave) - window):
-        xs.append(wave[i:i + window])
-        ys.append(wave[i + window])
-    X = torch.stack(xs).unsqueeze(-1)   # (N, window, 1) -> 转 (window, N, 1)
-    y = torch.stack(ys)                 # (N,)
-    X = X.permute(1, 0, 2)              # (window, N, 1)
-
-    model = nn.Sequential(MyLSTM(1, 32), nn.Identity())
-    lstm = model[0]
-    head = nn.Linear(32, 1)
-
-    optimizer = torch.optim.Adam(list(lstm.parameters()) + list(head.parameters()), lr=0.01)
-    loss_fn = nn.MSELoss()
-
-    for epoch in range(1, 301):
-        outputs, _ = lstm(X)            # (window, N, 32)
-        pred = head(outputs[-1]).squeeze(-1)
-        loss = loss_fn(pred, y)
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        if epoch % 100 == 0:
-            print(f"epoch {epoch:3d}  loss = {loss.item():.6f}")
-
-    with torch.no_grad():
-        pred = head(lstm(X)[0][-1]).squeeze(-1)
-        print(f"最终 MSE = {loss_fn(pred, y).item():.6f}")
-        print("前5个样本 预测 vs 真实:")
-        for p, gt in zip(pred[:5].tolist(), y[:5].tolist()):
-            print(f"  {p:+.4f}  vs  {gt:+.4f}")
-
-
-if __name__ == "__main__":
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"设备: {device}  torch: {torch.__version__}")
-    verify_against_nn_lstm()
-    print("-" * 40)
-    demo_sine_forecast()
+@torch.no_grad()
+def alignment_max_diff(num_layers: int = 1, seed: int = 0) -> float:
+    """随机输入下自定义实现与 nn.LSTM 的最大输出差异（应接近 0）。"""
+    torch.manual_seed(seed)
+    seq_len, batch, input_size, hidden_size = 7, 5, 3, 16
+    mine = MyLSTM(input_size, hidden_size, num_layers)
+    ref = build_aligned_nn_lstm(mine)
+    x = torch.randn(seq_len, batch, input_size)
+    out_mine, (h_mine, c_mine) = mine(x)
+    out_ref, (h_ref, c_ref) = ref(x)
+    diffs = [
+        (out_mine - out_ref).abs().max().item(),
+        (h_mine - h_ref).abs().max().item(),
+        (c_mine - c_ref).abs().max().item(),
+    ]
+    return max(diffs)
