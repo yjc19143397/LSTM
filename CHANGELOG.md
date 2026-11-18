@@ -2,6 +2,23 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 风格。
 
+## [0.4.0] - 2026-11-18
+
+### 新增
+
+- `--prompt`（可重复传入）与 `--interactive` 交互式续写，`char-lstm` 与 `transformer` 均支持。
+- `--max-new-tokens`、`--temperature`、`--top-k` 可配置生成参数；不传时保持原有默认示例。
+- 交互模式对字符级模型的词表外字符给出提示并继续，不中断会话。
+- `tests/test_cli_input.py`：参数解析、交互退出与未知字符处理。
+
+### 变更
+
+- 版本号提升至 0.4.0，README 补充自定义输入用法。
+
+### 修复
+
+- `char-lstm` 切换语料后，默认示例 prompt 仍为中文诗句，导致字符词表外字符 KeyError；现默认取当前语料开头作为 prompt。
+
 ## [0.3.0] - 2026-11-18
 
 ### 新增

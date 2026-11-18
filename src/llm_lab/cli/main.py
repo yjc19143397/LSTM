@@ -36,6 +36,57 @@ def _load_corpus(data_path: str | None, corpus: str) -> str:
     return get_corpus()
 
 
+DEFAULT_CHAR_TEMPERATURES = [0.7, 1.0, 1.3]
+DEFAULT_GPT_PROMPTS = ["ROMEO:", "What is the", "The king "]
+DEFAULT_GPT_TEMPERATURES = [0.8, 1.1]
+
+
+def _is_exit(text: str) -> bool:
+    return not text.strip() or text.strip().lower() in {"exit", "quit"}
+
+
+def _interactive_char(model, corpus: CharCorpus, args: argparse.Namespace) -> None:
+    """逐行读取 prompt，实时续写；空行或 exit/quit 退出。"""
+    print("进入交互模式：输入 prompt 回车续写，空行 / exit 退出")
+    while True:
+        try:
+            prompt = input(">>> ")
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return
+        if _is_exit(prompt):
+            return
+        try:
+            print(generate_chars(model, corpus, prompt,
+                                 max_new_tokens=args.max_new_tokens,
+                                 temperature=args.temperature,
+                                 top_k=args.top_k))
+        except KeyError as e:
+            print(f"prompt 含有词表外字符 {e}，请换一段输入")
+
+
+def _generate_gpt(model: GPT, tok: BPETokenizer, prompt: str,
+                  args: argparse.Namespace, temperature: float) -> str:
+    idx = torch.tensor([tok.encode(prompt)], device=DEVICE)
+    out = model.generate(idx, args.max_new_tokens, temperature=temperature,
+                         top_k=args.top_k)
+    return tok.decode(out[0].tolist())
+
+
+def _interactive_gpt(model: GPT, tok: BPETokenizer, args: argparse.Namespace) -> None:
+    """逐行读取 prompt，实时续写；空行或 exit/quit 退出。"""
+    print("进入交互模式：输入 prompt 回车续写，空行 / exit 退出")
+    while True:
+        try:
+            prompt = input(">>> ")
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return
+        if _is_exit(prompt):
+            return
+        print(_generate_gpt(model, tok, prompt, args, args.temperature))
+
+
 def cmd_char_lstm(args: argparse.Namespace) -> None:
     """字符级 LSTM 语言模型：训练 + 生成。"""
     disable_cudnn()
@@ -49,14 +100,22 @@ def cmd_char_lstm(args: argparse.Namespace) -> None:
     print("-" * 40 + "\n开始训练 ...")
     train_char_lm(model, corpus, steps=args.steps)
 
-    print("-" * 40 + "\n生成示例（不同温度的采样）:")
-    prompts = ["床前明月光，", "春眠不觉晓，", "好雨知"]
-    temps = [0.7, 1.0, 1.3]
-    for prompt, temp in zip(prompts, temps):
-        text = generate_chars(model, corpus, prompt, max_new_tokens=100,
-                              temperature=temp, top_k=40)
+    if args.prompt:
+        char_pairs = [(p, args.temperature) for p in args.prompt if p.strip()]
+    else:
+        # 用当前语料的开头作为默认 prompt，避免跨语料时出现词表外字符
+        base = corpus.text[:12].strip() or corpus.text[:1]
+        char_pairs = [(base, t) for t in DEFAULT_CHAR_TEMPERATURES]
+    print("-" * 40 + "\n生成示例:")
+    for prompt, temp in char_pairs:
+        out_text = generate_chars(model, corpus, prompt,
+                                  max_new_tokens=args.max_new_tokens,
+                                  temperature=temp, top_k=args.top_k)
         print(f"\n[temperature={temp}]  prompt: {prompt}")
-        print(text)
+        print(out_text)
+
+    if args.interactive:
+        _interactive_char(model, corpus, args)
 
 
 def cmd_transformer(args: argparse.Namespace) -> None:
@@ -105,14 +164,18 @@ def cmd_transformer(args: argparse.Namespace) -> None:
                       args.block_size, args.batch_size)
 
     # 5) 生成
+    if args.prompt:
+        gpt_pairs = [(p, args.temperature) for p in args.prompt if p.strip()]
+    else:
+        gpt_pairs = [(p, t) for p in DEFAULT_GPT_PROMPTS
+                     for t in DEFAULT_GPT_TEMPERATURES]
     print("-" * 50 + "\n生成示例:")
-    prompts = ["ROMEO:", "What is the", "The king "]
-    for prompt in prompts:
-        for temp in (0.8, 1.1):
-            idx = torch.tensor([tok.encode(prompt)], device=DEVICE)
-            out = model.generate(idx, 120, temperature=temp, top_k=40)
-            print(f"\n[temp={temp}] {prompt}")
-            print(tok.decode(out[0].tolist()))
+    for prompt, temp in gpt_pairs:
+        print(f"\n[temp={temp}] {prompt}")
+        print(_generate_gpt(model, tok, prompt, args, temp))
+
+    if args.interactive:
+        _interactive_gpt(model, tok, args)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -128,6 +191,15 @@ def build_parser() -> argparse.ArgumentParser:
                         help="使用手写 MyLSTM 代替 nn.LSTM")
     p_char.add_argument("--corpus", choices=["poetry", "nltk-words"], default="poetry",
                         help="训练语料：内置古诗词或 NLTK 英文词表")
+    p_char.add_argument("--prompt", action="append",
+                        help="生成用的 prompt，可重复传入；不给则用内置示例")
+    p_char.add_argument("--interactive", action="store_true",
+                        help="训练后进入交互式续写")
+    p_char.add_argument("--max-new-tokens", type=int, default=100,
+                        help="每次生成的字符数")
+    p_char.add_argument("--temperature", type=float, default=0.9,
+                        help="--prompt / 交互模式使用的采样温度")
+    p_char.add_argument("--top-k", type=int, default=40, help="top-k 采样")
 
     p_tr = sub.add_parser("transformer", help="BPE + Transformer 语言模型：训练 + 生成")
     src = p_tr.add_mutually_exclusive_group()
@@ -148,6 +220,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_tr.add_argument("--retrain-bpe", action="store_true", help="忽略缓存重建分词器")
     p_tr.add_argument("--bpe-chars", type=int, default=0,
                       help="训练 BPE 时采样多少字符，0 表示用全部语料")
+    p_tr.add_argument("--prompt", action="append",
+                      help="生成用的 prompt，可重复传入；不给则用内置示例")
+    p_tr.add_argument("--interactive", action="store_true",
+                      help="训练后进入交互式续写")
+    p_tr.add_argument("--max-new-tokens", type=int, default=120,
+                      help="每次生成的 token 数")
+    p_tr.add_argument("--temperature", type=float, default=0.9,
+                      help="--prompt / 交互模式使用的采样温度")
+    p_tr.add_argument("--top-k", type=int, default=40, help="top-k 采样")
     return parser
 
 

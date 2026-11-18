@@ -47,6 +47,15 @@ python run.py transformer --corpus nltk-words --steps 2000     # 词表作为 Tr
 python run.py transformer --retrain-bpe --bpe-extra nltk-words # 重建 BPE 时优先合并英文整词
 ```
 
+自定义生成输入：
+
+```powershell
+python run.py char-lstm --prompt "床前明月光，" --max-new-tokens 60   # 自定义 prompt
+python run.py char-lstm --interactive                                # 训练后逐行输入续写
+python run.py transformer --prompt "ROMEO:" --prompt "JULIET:"       # 多个 prompt
+python run.py transformer --interactive --temperature 0.8 --top-k 30 # 交互 + 采样参数
+```
+
 也可以安装为包，使用 `llm-lab` 命令：
 
 ```powershell
@@ -68,6 +77,7 @@ llm-lab transformer --steps 2000
 python run.py transformer --data my.txt      # 换任意 UTF-8 语料（中文也可）
 python run.py transformer --corpus nltk-words  # 用 NLTK 英文词表训练
 python run.py transformer --retrain-bpe      # 重新训练分词器
+python run.py transformer --prompt "ROMEO:" --interactive  # 自定义输入 + 交互续写
 python run.py transformer --n-layer 6 --n-head 6 --n-embd 384 --steps 1000   # 小模型快速试跑
 ```
 
