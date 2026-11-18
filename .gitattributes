@@ -1,0 +1,9 @@
+# 源码与文档统一 CRLF（Windows）
+*.py text eol=crlf
+*.md text eol=crlf
+*.toml text eol=crlf
+*.txt text eol=crlf
+*.ps1 text eol=crlf
+
+# 训练语料保持 LF，避免 \r 进入字符词表
+data/*.txt text eol=lf
