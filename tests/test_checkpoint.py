@@ -4,7 +4,7 @@ import pytest
 import torch
 
 from llm_lab.checkpoint import load_checkpoint, save_checkpoint
-from llm_lab.config import resolve_device
+from llm_lab.config import DEVICE_CHOICES, resolve_device
 from llm_lab.models import GPT
 
 
@@ -47,4 +47,4 @@ def test_resolve_device_npu_requires_torch_npu():
 
 
 def test_resolve_device_auto():
-    assert resolve_device("auto") in {"cpu", "cuda", "npu"}
+    assert resolve_device("auto") in (set(DEVICE_CHOICES) - {"auto"})

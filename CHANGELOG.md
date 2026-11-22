@@ -2,6 +2,19 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 风格。
 
+## [0.7.0] - 2026-11-18
+
+### 新增
+
+- 多厂商 NPU / AI 加速设备兼容：`--device` 新增 `mlu`（寒武纪 Cambricon）、`musa`（摩尔线程 Moore Threads）、`dipu`（海光 DCU / 天数智芯 / 壁仞等 DIPU 统一算力层）、`xpu`（Intel XPU GPU）、`mps`（Apple Silicon）；`auto` 按“专用 NPU / 国产算力卡 > CUDA > CPU”优先级自动选择第一个可用设备。
+- `config.py` 引入 `_BACKENDS` 注册表与通用检测器：先 import 触发注册，再查 `torch.<attr>.is_available()`；对未注册 `is_available` 的后端（musa / dipu）按 import 成功判定（参照 mmengine），避免漏掉真实硬件。显式指定不可用设备时退出并给出对应安装提示。
+- `list_accelerators()`：返回本机实际可用的加速后端列表，供展示与诊断。
+- `tests/test_device.py`：用 monkeypatch 模拟各厂商包可用性，覆盖显式解析、`auto` 优先级、报错提示、DIPU 设备解析与 MPS 特殊分支（21 个用例）。
+
+### 变更
+
+- 版本号提升至 0.7.0；README 设备章节改为多厂商优先级矩阵。
+
 ## [0.6.0] - 2026-11-18
 
 ### 新增

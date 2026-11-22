@@ -8,7 +8,8 @@ import os
 import torch
 
 from ..checkpoint import load_checkpoint, save_checkpoint
-from ..config import DEVICE, MERGES_PATH, ROOT_DIR, disable_cudnn, resolve_device
+from ..config import (DEVICE, DEVICE_CHOICES, MERGES_PATH, ROOT_DIR,
+                      disable_cudnn, resolve_device)
 from ..intel_npu import OpenVINONPU, npu_available
 from ..data import POETRY_CORPUS, CharCorpus, get_corpus, get_nltk_words
 from ..demo import sine_forecast_demo
@@ -262,8 +263,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="--prompt / 交互模式使用的采样温度")
     p_char.add_argument("--top-k", type=int, default=40, help="top-k 采样")
     p_char.add_argument("--device", default="auto",
-                        choices=["auto", "npu", "cuda", "cpu"],
-                        help="运行设备，auto 按 NPU > CUDA > CPU 选择")
+                        choices=DEVICE_CHOICES,
+                        help=f"运行设备：auto 自动选择，或显式指定 "
+                           f"{', '.join(DEVICE_CHOICES[1:])}")
     p_char.add_argument("--checkpoint",
                         default=os.path.join(ROOT_DIR, "checkpoints", "char_lstm.pt"),
                         help="训练后保存权重的路径")
@@ -302,7 +304,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_tr.add_argument("--top-k", type=int, default=40, help="top-k 采样")
     p_tr.add_argument("--device", default="auto",
                       choices=["auto", "npu", "cuda", "cpu"],
-                      help="运行设备，auto 按 NPU > CUDA > CPU 选择")
+                      help=f"运行设备：auto 自动选择，或显式指定 "
+                           f"{', '.join(DEVICE_CHOICES[1:])}")
     p_tr.add_argument("--checkpoint",
                       default=os.path.join(ROOT_DIR, "checkpoints", "transformer.pt"),
                       help="训练后保存权重的路径")

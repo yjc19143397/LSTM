@@ -66,23 +66,44 @@ pip install -e ".[dev]"
 llm-lab transformer --steps 2000
 ```
 
-## 设备选择（NPU / CUDA / CPU）
+## 设备选择（多厂商 NPU / CUDA / CPU）
 
-`--device` 支持 `auto`（默认）、`npu`、`cuda`、`cpu`：
+`--device` 支持 `auto`（默认）与显式指定，可选值：`auto / cpu / cuda / npu / mlu / musa / dipu / xpu / mps`。
 
 ```powershell
-python run.py transformer --device npu --steps 2000   # 昇腾 NPU
+python run.py transformer --device npu  --steps 2000   # 昇腾 Ascend NPU
+python run.py transformer --device mlu  --steps 2000   # 寒武纪 Cambricon
+python run.py transformer --device musa --steps 2000   # 摩尔线程 Moore Threads
 python run.py transformer --device cuda               # NVIDIA GPU
-python run.py char-lstm --device cpu --steps 200      # CPU 调试
+python run.py char-lstm --device cpu --steps 200       # CPU 调试
 ```
 
-`auto` 按 **NPU > CUDA > CPU** 选择。NPU 需要安装与 torch 版本匹配的 `torch_npu`，未安装时自动回落到 CUDA/CPU：
+`auto` 按以下优先级自动选择第一个可用设备（专用 NPU / 国产算力卡优先于通用 CUDA）：
+
+| 优先级 | device | 厂商 / 设备 | 触发包 |
+| --- | --- | --- | --- |
+| 1 | `npu` | 昇腾 Ascend NPU | `torch_npu` |
+| 2 | `mlu` | 寒武纪 Cambricon MLU | `torch_mlu` |
+| 3 | `musa` | 摩尔线程 Moore Threads MUSA | `torch_musa` |
+| 4 | `dipu` | DIPU 统一算力层（海光 DCU / 天数智芯 / 壁仞等） | `torch_dipu` |
+| 5 | `xpu` | Intel XPU GPU | `intel_extension_for_pytorch` |
+| 6 | `mps` | Apple Silicon MPS | PyTorch 内置 |
+| 7 | `cuda` | NVIDIA CUDA | PyTorch 内置 |
+| 8 | `cpu` | CPU（兜底） | — |
+
+显式指定不可用的设备会直接退出并给出安装提示，例如未装 `torch_mlu` 时 `--device mlu` 提示 `需安装 torch-mlu`。各后端包需与本机 PyTorch 版本匹配，请到对应厂商官网获取：
 
 ```powershell
-pip install torch-npu
+pip install torch-npu        # 昇腾
+pip install torch-mlu        # 寒武纪
+pip install torch-musa       # 摩尔线程
+pip install torch-dipu       # 海光 / 天数智芯 / 壁仞（DIPU 统一层）
+pip install intel-extension-for-pytorch   # Intel XPU GPU
 ```
 
-`--device npu` 专指昇腾；没有 `torch_npu` 时会提示改用 Intel NPU 的 `--intel-npu`。
+> DIPU 默认把设备 mock 成 `cuda`（`DIPU_MOCK_CUDA`），开启时 `auto` 也会通过 `cuda` 路由到对应国产卡；未开启时取 `torch_dipu.dipu.device.__dipu__`。
+>
+> `--device npu` 专指昇腾（`torch_npu`）；没有 `torch_npu` 时会提示改用 Intel NPU 的 `--intel-npu`。
 
 ### Intel NPU（AI Boost）
 
@@ -159,7 +180,7 @@ Transformer：
 pytest
 ```
 
-测试覆盖：手写 LSTM 与 `nn.LSTM` 数值一致、字符词表编解码、BPE 编解码与持久化、Transformer 前向与生成、权重保存/加载、设备解析、命令行输入。
+测试覆盖：手写 LSTM 与 `nn.LSTM` 数值一致、字符词表编解码、BPE 编解码与持久化、Transformer 前向与生成、权重保存/加载、多厂商设备解析与探测、命令行输入。
 
 ## 说明
 
